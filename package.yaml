@@ -1,0 +1,61 @@
+name:                distChat
+version:             0.1.0.0
+github:              "k-solutions/distChat"
+license:             BSD3
+author:              "Hristo Kochev"
+maintainer:          "h.l.kochev@gmail.com"
+copyright:           "2019 Hristo Kochev"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+# Metadata used when publishing your package
+synopsis:            Distributed chat from the Simon Marlow "Parallel and Concurrent Programing in Haskell"
+category:            Network
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/k-solutions/distChat#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- binary >= 0.6 && < 1.0  
+- distributed-process > 0.6.3 && < 0.8
+- distributed-process-simplelocalnet ==0.2.*
+- distributed-static >= 0.2 && < 0.4
+- template-haskell
+- network >=2.6.2 && <2.9
+- network-transport-tcp 
+- stm
+- containers 
+- bytestring
+- async
+
+library:
+  source-dirs: src
+  ghc-options: 
+  - -Wall
+
+executables:
+  distChat-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - distChat
+
+tests:
+  distChat-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - distChat
