@@ -25,11 +25,11 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
-    [port, chatPort]      -> defaultNode port chatPort
     ["master"]            -> doMaster defHost defPort
     ["master", host]      -> doMaster host defPort
     ["slave", port]       -> doSlave defHost port
     ["slave", host, port] -> doSlave host port
+    [port, chatPort]      -> defaultNode port chatPort
     _                     -> error "Bad parameters passed: Either [master] or [slave, port]!"
   where
     (defHost, defPort) = ("127.0.0.1", "8100")

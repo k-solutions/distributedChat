@@ -1,3 +1,4 @@
 .stack-work/
 distChat.cabal
 *~
+**/*.swp

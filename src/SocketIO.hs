@@ -20,10 +20,12 @@ sockIO port forkFn = withSocketsDo $ do
     Ex.bracket (open addr) close loop
   where
     resolve port = do
-      let hints = defaultHints { addrFlags = [AI_PASSIVE]
+      let hints = defaultHints { addrFlags      = [AI_PASSIVE]
+                               , addrFamily     = AF_INET
                                , addrSocketType = Stream
                                }
-      addr:_ <- getAddrInfo (Just hints) Nothing (Just port)
+      addr:_ <- getAddrInfo (Just hints) (Just "0.0.0.0") (Just port)
+      putStrLn $ "Detected: " ++ show addr
       return addr
 
     open addr = do

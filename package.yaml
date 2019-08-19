@@ -28,6 +28,7 @@ dependencies:
 - template-haskell
 - network >=2.6.2 && <2.9
 - network-transport-tcp 
+- network-simple
 - stm
 - containers 
 - bytestring

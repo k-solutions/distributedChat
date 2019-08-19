@@ -17,7 +17,6 @@ import           Control.Distributed.Process                        (Closure,
                                                                      ProcessId)
 import qualified Control.Distributed.Process                        as DP
 import           Control.Distributed.Process.Backend.SimpleLocalnet
-import           Control.Distributed.Process.Closure
 import           Control.Monad
 import           Data.List                                          (find)
 import qualified Data.Map                                           as Map
@@ -30,15 +29,16 @@ maxTimeout = 100000
 registerName = "chatNode"
 
 -- ---- Server Process Helpers ----
+
 nodeMaster ::  Backend
             -> Port
             -> Process ()
 nodeMaster backend port = do
     myPid <- DP.getSelfPid
-    peers <- DP.liftIO $ findPeers backend maxTimeout
     DP.register registerName myPid
+    peers <- DP.liftIO $ findPeers backend maxTimeout
     forM_ peers $ \peer ->
-                    DP.whereisRemoteAsync peer registerName
+                     DP.whereisRemoteAsync peer registerName
     chatServer $ show port
 
 singleMaster ::  Int
@@ -67,12 +67,11 @@ run nId closure = do
 chatServer ::  Port
             -> Process ()
 chatServer port = do
-    server <- mkServer []
-    _ <- DP.liftIO $ forkIO $ serverIO server port
-    _ <- DP.spawnLocal $ proxy server
-    forever $ do
-      m <- DP.expect
-      handleRemoteMsg server m
+    srv <- mkServer []
+    _ <- DP.liftIO $ forkIO $ serverIO srv port
+    _ <- DP.spawnLocal $ proxy srv
+    forever $ DP.expect >>=
+      handleRemoteMsg srv
 
 -- | Proxy to server
 proxy ::  Server
@@ -105,25 +104,26 @@ handleRemoteMsg srv@Server{..} msg = DP.liftIO $ atomically $
     MsgSend name m            -> void $ sendToName srv name m
     MsgBroadcast m            -> brdLocal srv m
     MsgKick who by            -> kick srv who by
-    MsgClientNew name pid       -> do
+    MsgClientNew name pid     -> do
       ok <- checkAddClient srv (RC $ RmClient name pid)
       unless ok $ sendRemMsg srv pid $ MsgKick name "SYSTEM"
-    MsgClientDiscon name pid    -> do
+    MsgClientDiscon name pid  -> do
       clientMap <- readTVar srvClients
       case Map.lookup name clientMap of
         Nothing                                   -> return ()
         Just (RC (RmClient _ pid')) | pid == pid' -> deleteClient srv name
         Just _                                    -> return ()
-    MsgNewSrvInfo cltLst srvPid -> do
+    MsgNewSrvInfo cltLst pid -> do
       srvPids <- readTVar srvServers
-      case find (==srvPid) srvPids of
-        Just    _ -> addSrvClients srvPid cltLst -- ^ add new clients or kickoff existing
+      case find (==pid) srvPids of
+        Just    _ -> addSrvClients pid cltLst -- ^ add new clients or kickoff existing
         Nothing   -> do
-          modifyTVar srvServers (srvPid:)
-          addSrvClients srvPid cltLst
-    WhereIsReply _ (Just pid)   -> do
+          modifyTVar srvServers (pid:)
+          addSrvClients pid cltLst
+    WhereIsReply _ (Just pid) | pid /= srvPid -> do
       cltMap <- readTVar srvClients
       sendRemMsg srv pid $ MsgNewSrvInfo (Map.keys cltMap) srvPid
+    WhereIsReply _ _          -> return ()
   where
     checkKnownClients ::  ProcessId
                        -> [ClientName]

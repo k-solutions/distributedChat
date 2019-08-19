@@ -15,15 +15,16 @@ module ChatServer
 import           Control.Concurrent.Async (race)
 import           Control.Concurrent.STM
 import           Control.Exception        (finally, mask)
-import           Control.Monad            (forever, join, unless, void, when)
+import           Control.Monad            (forever, join, when)
 import           Data.ByteString          (ByteString)
 import qualified Data.ByteString.Char8    as BC
 import qualified Data.Map                 as Map
+import qualified Network.Simple.TCP       as NetS
 import           Network.Socket           (socketToHandle)
 import           System.IO
 
 import           ChatClient
-import           SocketIO
+-- import           SocketIO
 
 type Port = String
 
@@ -33,9 +34,11 @@ serverIO ::  Server
           -> Port
           -> IO ()
 serverIO srv port =
-    sockIO port (talkTo srv)
+   -- sockIO port (talkTo srv)
+   NetS.serve "0.0.0.0" port (talkTo srv)
   where
-    talkTo server conn = do
+    talkTo server (conn, remAddr) = do
+      putStrLn $ "Connection established from " ++ show remAddr
       hdl    <- socketToHandle conn ReadWriteMode
       forever $ talk hdl server
 
@@ -64,49 +67,6 @@ talk hdl server = do
               restore (runClient server client)
                   `finally` removeClient server name
 
--- ---- Client STM Helpers ----
-
-checkAddClient ::  Server
-                -> Client
-                -> STM Bool
-checkAddClient Server{..} clt = do
-  cltMap <- readTVar srvClients
-  return $ Map.member (clientName clt) cltMap
-
-deleteClient ::  Server
-              -> ClientName
-              -> STM ()
-deleteClient Server{..} name =
-    modifyTVar srvClients (Map.delete name)
-
-tell ::  Server
-      -> ClientName
-      -> Msg
-      -> STM ()
-tell srv@Server{..} name msg = do
-    cltMap <- readTVar srvClients
-    case Map.lookup name cltMap of
-      Nothing -> return ()
-      Just c  -> sendMsg srv c msg
-
-kick ::  Server
-      -> ClientName
-      -> ClientName
-      -> STM ()
-kick server@Server{..} by name = do
-    cltMap <- readTVar srvClients
-    case Map.lookup name cltMap of
-      Nothing ->
-        tell server by (Notice $ BC.concat [name, " is not connected"])
-      Just c  -> doKick c
-  where
-    kikedMsg = (Notice . BC.concat) ["You kicked out: ", name]
-    doKick (RC _)            = tell server by kikedMsg
-    doKick (LC LcClient{..}) = do
-      brdRemote server (MsgKick by name)
-      writeTVar lcKicked (Just . BC.concat $ ["by ", by])
-      tell server by kikedMsg
-
 -- ---- Client IO Helpers ----
 
 handleMsg ::  Server
@@ -126,7 +86,7 @@ handleMsg server LcClient{..} msg =
                -> IO Bool
     handleCmd  ["/quit"]            = return False
     handleCmd  ["/kick", who]       = do
-                atomically $ kick server who lcName
+                atomically $ kick server lcName who
                 return True
     handleCmd  ("/tell":who:what)   = do
                 atomically $ tell server who (Tell lcName $ BC.unwords what)
@@ -141,8 +101,6 @@ handleMsg server LcClient{..} msg =
           | otherwise                  = do
             atomically $ broadcast server (Broadcast lcName $ BC.unwords bs)
             return True
-
--- ---- Client IO Helpers ----
 
 runClient ::  Server
            -> Client
@@ -168,7 +126,6 @@ runClient srv@Server{..} (LC clt@LcClient{..}) = do
     getAny (Right msg) = msg
 runClient _ _ = return ()
 
-
 addClient ::  Server
            -> ClientName
            -> Handle
@@ -178,9 +135,11 @@ addClient srv@Server{..} name hdl = atomically $ do
   if Map.member name clientMap
     then return Nothing
     else do
-      client <- mkClient srv name hdl srvChanBrd
+      lc <- mkLocalClient name hdl srvChanBrd
+      let client = LC lc
       writeTVar srvClients $ Map.insert name client clientMap
       broadcast srv $ conMsg $ BC.intercalate ", " (Map.keys clientMap)
+      brdRemote srv $ MsgClientNew name srvPid
       return $ Just client
   where
     conMsg allNames = connectMsg [name, " has connected. Welcome by: (", allNames, ")"]
@@ -188,9 +147,10 @@ addClient srv@Server{..} name hdl = atomically $ do
 removeClient ::  Server
               -> ClientName
               -> IO ()
-removeClient server@Server{..} name = atomically $ do
+removeClient srv@Server{..} name = atomically $ do
   modifyTVar' srvClients $ Map.delete name
-  broadcast server $ clientDisconnect name
+  broadcast srv $ clientDisconnect name
+  brdRemote srv $ MsgClientDiscon name srvPid
   where clientDisconnect n  = connectMsg [n, " has disconnected"]
 
 -- ---- Helpers ----
