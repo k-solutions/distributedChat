@@ -24,7 +24,7 @@ sockIO port forkFn = withSocketsDo $ do
                                , addrFamily     = AF_INET
                                , addrSocketType = Stream
                                }
-      addr:_ <- getAddrInfo (Just hints) (Just "0.0.0.0") (Just port)
+      addr:_ <- getAddrInfo (Just hints) Nothing (Just port)
       putStrLn $ "Detected: " ++ show addr
       return addr
 

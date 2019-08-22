@@ -50,8 +50,7 @@ data Msg = Notice ByteString
 
 instance Binary Msg
 
-data Message = WhereIsReply    String       (Maybe ProcessId)
-             | MsgNewSrvInfo   [ClientName] ProcessId
+data Message = MsgNewSrvInfo   [ClientName] ProcessId
              | MsgServers      [ProcessId]
              | MsgSend         ClientName Msg
              | MsgBroadcast    Msg

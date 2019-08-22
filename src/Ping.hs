@@ -29,13 +29,17 @@ pingServer = do
     myPid     <- getSelfPid
     sendChan chan myPid
 
-master :: Closure (Process ()) -> Backend -> [NodeId] -> Process ()
-master remoteExec backend peers = do
+master :: Closure (Process ()) -> Backend -> Process ()
+master remoteExec backend = do
+    myPid  <- getSelfPid
+    register "simple" myPid
+
+    peers  <- liftIO $ findPeers backend 1000000
     ps     <- forM peers $ \nId -> do
       say $ printf "spawning on %s" (show nId)
       spawn nId remoteExec
 
---    mapM_ monitor ps
+    mapM_ monitor ps
 
     ports <- forM ps $ \pid -> do
       say $ printf "pinging %s" (show pid)
@@ -45,10 +49,6 @@ master remoteExec backend peers = do
     mstChan <- mergePortsRR ports
     waitForPongs mstChan ps
 
---    forM_ ports $ \port -> do
---       _ <- receiveChan port
---       return ()
-    say "All pongs recived!"
     terminateAllSlaves backend
     terminate
 

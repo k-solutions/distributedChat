@@ -12,6 +12,7 @@ module ChatServer
   , tell
   ) where
 
+import           ChatClient
 import           Control.Concurrent.Async (race)
 import           Control.Concurrent.STM
 import           Control.Exception        (finally, mask)
@@ -19,12 +20,11 @@ import           Control.Monad            (forever, join, when)
 import           Data.ByteString          (ByteString)
 import qualified Data.ByteString.Char8    as BC
 import qualified Data.Map                 as Map
+import           Network.Simple.TCP       (HostPreference (..))
 import qualified Network.Simple.TCP       as NetS
 import           Network.Socket           (socketToHandle)
+-- import           SocketIO                 (sockIO)
 import           System.IO
-
-import           ChatClient
--- import           SocketIO
 
 type Port = String
 
@@ -33,9 +33,8 @@ type Port = String
 serverIO ::  Server
           -> Port
           -> IO ()
-serverIO srv port =
-   -- sockIO port (talkTo srv)
-   NetS.serve "0.0.0.0" port (talkTo srv)
+serverIO srv chatPort =
+    NetS.serve (Host "0.0.0.0") chatPort (talkTo srv)
   where
     talkTo server (conn, remAddr) = do
       putStrLn $ "Connection established from " ++ show remAddr

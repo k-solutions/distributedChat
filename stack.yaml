@@ -67,4 +67,4 @@ packages:
 nix: 
   enable: true
   # shell-file: default.nix
-  packages: [ iana-etc ]
+  # packages: [ iana-etc ]

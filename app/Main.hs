@@ -16,9 +16,10 @@ remotable ['chatServer]
 myRemoteTable :: RemoteTable
 myRemoteTable = Main.__remoteTable DN.initRemoteTable
 
-master :: [NodeId] -> Process ()
-master = singleMaster serverPort $(mkClosure 'chatServer)
+localMaster :: [NodeId] -> Process ()
+localMaster = singleMaster serverPort defClosure
 
+defClosure = $(mkClosure 'chatServer)
 serverPort = 8000
 
 main :: IO ()
@@ -33,13 +34,14 @@ main = do
     _                     -> error "Bad parameters passed: Either [master] or [slave, port]!"
   where
     (defHost, defPort) = ("127.0.0.1", "8100")
+
     doSlave host port = do
       backend <-  DL.initializeBackend host port myRemoteTable
       DL.startSlave backend
 
     doMaster host port = do
       backend <- DL.initializeBackend host port myRemoteTable
-      DL.startMaster backend master -- defaultClosure
+      DL.startMaster backend localMaster -- defaultClosure
 
     defaultNode port chatPort = do
       backend <- DL.initializeBackend defHost port myRemoteTable

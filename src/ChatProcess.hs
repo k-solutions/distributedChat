@@ -14,7 +14,8 @@ import           Control.Concurrent.STM
 import           Control.Distributed.Process                        (Closure,
                                                                      NodeId,
                                                                      Process,
-                                                                     ProcessId)
+                                                                     ProcessId,
+                                                                     WhereIsReply (..))
 import qualified Control.Distributed.Process                        as DP
 import           Control.Distributed.Process.Backend.SimpleLocalnet
 import           Control.Monad
@@ -24,6 +25,7 @@ import           Text.Printf
 
 import           ChatClient
 import           ChatServer
+import           Data.ByteString.Char8                              (pack)
 
 maxTimeout = 100000
 registerName = "chatNode"
@@ -33,13 +35,15 @@ registerName = "chatNode"
 nodeMaster ::  Backend
             -> Port
             -> Process ()
-nodeMaster backend port = do
+nodeMaster backend chatPort = do
     myPid <- DP.getSelfPid
+    DP.say "Node started"
     DP.register registerName myPid
     peers <- DP.liftIO $ findPeers backend maxTimeout
-    forM_ peers $ \peer ->
+    forM_ peers $ \peer -> do
                      DP.whereisRemoteAsync peer registerName
-    chatServer $ show port
+                     DP.say $ "Peer contacted: " ++ show peer
+    chatServer chatPort
 
 singleMaster ::  Int
               -> (Port -> Closure (Process ()))
@@ -68,10 +72,13 @@ chatServer ::  Port
             -> Process ()
 chatServer port = do
     srv <- mkServer []
-    _ <- DP.liftIO $ forkIO $ serverIO srv port
     _ <- DP.spawnLocal $ proxy srv
-    forever $ DP.expect >>=
-      handleRemoteMsg srv
+    _ <- DP.liftIO $ forkIO $ serverIO srv port
+    forever $ DP.receiveWait
+      [ DP.match $ handleWhereIs srv
+      , DP.match $ handleRemoteMsg srv
+      , DP.matchUnkown $ return ()
+      ] -- DP.expect >>= handleRemoteMsg srv
 
 -- | Proxy to server
 proxy ::  Server
@@ -94,6 +101,13 @@ mkServer pids = do
                     , srvServers   = servers
                     , srvPid       = pid
                     }
+handleWhereIs ::  Server
+               -> WhereIsReply
+               -> Process ()
+handleWhereIs srv  (WhereIsReply _ (Just pid))
+    | pid /= srvPid  = readTVar srvClients >>= sendClientsTo pid
+--    | otherwise      = return ()
+handleEhereIs _  (WhereIsReply _ _) = return ()
 
 handleRemoteMsg ::  Server
                  -> Message
@@ -104,27 +118,36 @@ handleRemoteMsg srv@Server{..} msg = DP.liftIO $ atomically $
     MsgSend name m            -> void $ sendToName srv name m
     MsgBroadcast m            -> brdLocal srv m
     MsgKick who by            -> kick srv who by
+
     MsgClientNew name pid     -> do
       ok <- checkAddClient srv (RC $ RmClient name pid)
       unless ok $ sendRemMsg srv pid $ MsgKick name "SYSTEM"
+
     MsgClientDiscon name pid  -> do
       clientMap <- readTVar srvClients
       case Map.lookup name clientMap of
         Nothing                                   -> return ()
         Just (RC (RmClient _ pid')) | pid == pid' -> deleteClient srv name
         Just _                                    -> return ()
-    MsgNewSrvInfo cltLst pid -> do
+
+    MsgNewSrvInfo cltLst pid | pid /= srvPid -> do
+      brdLocal srv . Notice . pack $"New server is connected with pid: " ++ show pid ++ " and " ++ (show. length) cltLst ++ " clients"
       srvPids <- readTVar srvServers
       case find (==pid) srvPids of
-        Just    _ -> addSrvClients pid cltLst -- ^ add new clients or kickoff existing
+        Just    _ -> addNewSrvClients pid cltLst        -- ^ Send ours to sender and add new clients or kickoff existing
         Nothing   -> do
           modifyTVar srvServers (pid:)
-          addSrvClients pid cltLst
-    WhereIsReply _ (Just pid) | pid /= srvPid -> do
-      cltMap <- readTVar srvClients
-      sendRemMsg srv pid $ MsgNewSrvInfo (Map.keys cltMap) srvPid
-    WhereIsReply _ _          -> return ()
+          addNewSrvClients pid cltLst
+
   where
+    sendClientsTo pid cltMap =
+      sendRemMsg srv pid $ MsgNewSrvInfo (Map.keys cltMap) srvPid
+
+    addNewSrvClients newSrvPid newCltList  = do
+          oldCltMap <- readTVar srvClients
+          sendClientsTo newSrvPid oldCltMap             -- ^ We send our client to sender
+          newCltMap <- checkKnownClients newSrvPid newCltList oldCltMap
+          writeTVar srvClients newCltMap
     checkKnownClients ::  ProcessId
                        -> [ClientName]
                        -> ClientMap
@@ -140,8 +163,3 @@ handleRemoteMsg srv@Server{..} msg = DP.liftIO $ atomically $
           | otherwise            = return (k, LC clt)
         toNewClientMap (k, client) _ =
            return (k, client)
-
-    addSrvClients newSrvPid newCltList  = do
-          oldCltMap <- readTVar srvClients
-          newCltMap <- checkKnownClients newSrvPid newCltList oldCltMap
-          writeTVar srvClients newCltMap
