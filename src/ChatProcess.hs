@@ -27,6 +27,7 @@ import           ChatClient
 import           ChatServer
 import           Data.ByteString.Char8                              (pack)
 
+
 maxTimeout = 100000
 registerName = "chatNode"
 
@@ -77,13 +78,13 @@ chatServer port = do
     forever $ DP.receiveWait
       [ DP.match $ handleWhereIs srv
       , DP.match $ handleRemoteMsg srv
-      , DP.matchUnkown $ return ()
+      , DP.matchUnknown $ return ()
       ] -- DP.expect >>= handleRemoteMsg srv
 
 -- | Proxy to server
 proxy ::  Server
        -> Process ()
-proxy Server {..} = forever $ join $ DP.liftIO $ atomically
+proxy Server {..} = forever . join . liftSTM
                   $ readTChan srvChanProxy
 
 mkServer ::  [ProcessId]
@@ -101,18 +102,29 @@ mkServer pids = do
                     , srvServers   = servers
                     , srvPid       = pid
                     }
+
 handleWhereIs ::  Server
                -> WhereIsReply
                -> Process ()
-handleWhereIs srv  (WhereIsReply _ (Just pid))
-    | pid /= srvPid  = readTVar srvClients >>= sendClientsTo pid
---    | otherwise      = return ()
-handleEhereIs _  (WhereIsReply _ _) = return ()
+handleWhereIs srv@Server {..}  (WhereIsReply _ (Just pid))
+    | pid /= srvPid = do
+        DP.say $ "WhereIs replay received from " ++ show pid
+        liftSTM $   readTVar srvClients
+                >>= sendClientsTo srv pid
+
+handleWhereIs _  (WhereIsReply _ _) = return ()
 
 handleRemoteMsg ::  Server
                  -> Message
                  -> Process ()
-handleRemoteMsg srv@Server{..} msg = DP.liftIO $ atomically $
+handleRemoteMsg srv msg = do
+  DP.say $ "Server message received " ++ show msg
+  liftSTM $ handleEachMsg srv msg
+
+handleEachMsg ::  Server
+               -> Message
+               -> STM ()
+handleEachMsg srv@Server{..} msg =
   case msg of
     MsgServers pids           -> writeTVar srvServers $ filter (/= srvPid) pids
     MsgSend name m            -> void $ sendToName srv name m
@@ -134,20 +146,22 @@ handleRemoteMsg srv@Server{..} msg = DP.liftIO $ atomically $
       brdLocal srv . Notice . pack $"New server is connected with pid: " ++ show pid ++ " and " ++ (show. length) cltLst ++ " clients"
       srvPids <- readTVar srvServers
       case find (==pid) srvPids of
-        Just    _ -> addNewSrvClients pid cltLst        -- ^ Send ours to sender and add new clients or kickoff existing
+        Just    _ -> addNewSrvClients pid cltLst False      -- ^ add new clients or kickoff existing
         Nothing   -> do
           modifyTVar srvServers (pid:)
-          addNewSrvClients pid cltLst
+          addNewSrvClients pid cltLst True                  -- ^ add new clients and send ours back
 
   where
-    sendClientsTo pid cltMap =
-      sendRemMsg srv pid $ MsgNewSrvInfo (Map.keys cltMap) srvPid
-
-    addNewSrvClients newSrvPid newCltList  = do
+    addNewSrvClients ::  ProcessId
+                      -> [ClientName]
+                      -> Bool          -- ^ if True should send our clients list
+                      -> STM ()
+    addNewSrvClients newSrvPid newCltList sendClients = do
           oldCltMap <- readTVar srvClients
-          sendClientsTo newSrvPid oldCltMap             -- ^ We send our client to sender
+          when sendClients $ sendClientsTo srv newSrvPid oldCltMap             -- ^ We send our client to sender
           newCltMap <- checkKnownClients newSrvPid newCltList oldCltMap
           writeTVar srvClients newCltMap
+
     checkKnownClients ::  ProcessId
                        -> [ClientName]
                        -> ClientMap
@@ -163,3 +177,15 @@ handleRemoteMsg srv@Server{..} msg = DP.liftIO $ atomically $
           | otherwise            = return (k, LC clt)
         toNewClientMap (k, client) _ =
            return (k, client)
+
+-- ---- Helpers -----
+
+liftSTM :: STM a -> Process a
+liftSTM = DP.liftIO . atomically
+
+sendClientsTo ::  Server
+               -> ProcessId
+               -> ClientMap
+               -> STM ()
+sendClientsTo srv@Server {..} pid cltMap = sendRemMsg srv pid
+                                         $ MsgNewSrvInfo (Map.keys cltMap) srvPid
