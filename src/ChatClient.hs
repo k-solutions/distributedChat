@@ -20,6 +20,7 @@ module ChatClient
   , broadcast
   , tell
   , kick
+  , getClient
   , checkAddClient
   , deleteClient
   , sendMsg
@@ -34,6 +35,7 @@ import           Data.ByteString             (ByteString)
 import qualified Data.ByteString.Char8       as BC
 import           Data.Map                    (Map)
 import qualified Data.Map                    as Map
+import           Data.Maybe                  (maybe)
 import           Data.Typeable
 import           GHC.Generics
 import           System.IO                   (Handle)
@@ -57,7 +59,7 @@ data Message = MsgNewSrvInfo   [ClientName] ProcessId
              | MsgKick         ClientName ClientName
              | MsgClientNew    ClientName ProcessId
              | MsgClientDiscon ClientName ProcessId
-             deriving (Typeable, Generic)
+             deriving (Show, Typeable, Generic)
 
 instance Binary Message
 
@@ -104,6 +106,12 @@ checkAddClient Server{..} clt = do
       modifyTVar srvClients $ Map.insert cltName clt
       return False
 
+getClient ::  Server
+           -> ClientName
+           -> STM (Maybe Client)
+getClient Server{..} name =   Map.lookup name
+                          <$> readTVar srvClients
+
 deleteClient ::  Server
               -> ClientName
               -> STM ()
@@ -114,30 +122,27 @@ tell ::  Server
       -> ClientName
       -> Msg
       -> STM ()
-tell srv@Server{..} name msg = do
-    cltMap <- readTVar srvClients
-    case Map.lookup name cltMap of
-      Nothing -> return ()
-      Just c  -> sendMsg srv c msg
+tell srv@Server{..} name msg  =   getClient srv name
+                              >>= maybe (return ()) sendTo
+  where sendTo c = sendMsg srv c msg
 
 kick ::  Server
       -> ClientName
       -> ClientName
       -> STM ()
-kick server@Server{..} by name = do
-    cltMap <- readTVar srvClients
-    case Map.lookup name cltMap of
-      Nothing ->
-        tell server by (Notice $ BC.concat [name, " is not connected"])
-      Just c  -> doKick c
+kick srv@Server{..} name by =   getClient srv name
+                            >>= maybe sendNotFound doKick
   where
-    kikedMsg = (Notice . BC.concat) ["You kicked out: ", name]
-    doKick (RC RmClient{..}) =
-      sendRemMsg server rcHome $ MsgKick by name -- kikedMsg
-    doKick (LC LcClient{..}) = do
-      brdRemote server (MsgKick by name)
+    sendNotFound              = tell srv by (Notice $ BC.concat [name, " is not connected"])
+    kickedMsg                 = (Notice . BC.concat) ["You kicked out: ", name]
+
+    doKick (RC RmClient{..})  =
+      sendRemMsg srv rcHome $ MsgKick name by -- kikedMsg
+
+    doKick (LC LcClient{..})  = do
+      brdRemote srv $ MsgBroadcast kickedMsg
       writeTVar lcKicked (Just . BC.concat $ ["by ", by])
-      tell server by kikedMsg
+      tell srv by kickedMsg
 
 mkRemoteClient ::  ClientName
                 -> ProcessId

@@ -130,20 +130,17 @@ handleEachMsg srv@Server{..} msg =
     MsgSend name m            -> void $ sendToName srv name m
     MsgBroadcast m            -> brdLocal srv m
     MsgKick who by            -> kick srv who by
-
     MsgClientNew name pid     -> do
       ok <- checkAddClient srv (RC $ RmClient name pid)
       unless ok $ sendRemMsg srv pid $ MsgKick name "SYSTEM"
 
     MsgClientDiscon name pid  -> do
-      clientMap <- readTVar srvClients
-      case Map.lookup name clientMap of
-        Nothing                                   -> return ()
+      mbClient <- getClient srv name
+      case mbClient of
         Just (RC (RmClient _ pid')) | pid == pid' -> deleteClient srv name
-        Just _                                    -> return ()
+        _                                         -> return ()
 
     MsgNewSrvInfo cltLst pid | pid /= srvPid -> do
-      brdLocal srv . Notice . pack $"New server is connected with pid: " ++ show pid ++ " and " ++ (show. length) cltLst ++ " clients"
       srvPids <- readTVar srvServers
       case find (==pid) srvPids of
         Just    _ -> addNewSrvClients pid cltLst False      -- ^ add new clients or kickoff existing
@@ -172,7 +169,7 @@ handleEachMsg srv@Server{..} msg =
       where
         toNewClientMap (k, LC clt@LcClient{..}) name
           | name == lcName = do
-            kick srv name name
+            kick srv name "SYSTEM"
             (name,) . RC <$> mkRemoteClient name newSrvPid
           | otherwise            = return (k, LC clt)
         toNewClientMap (k, client) _ =

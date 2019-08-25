@@ -23,7 +23,6 @@ import qualified Data.Map                 as Map
 import           Network.Simple.TCP       (HostPreference (..))
 import qualified Network.Simple.TCP       as NetS
 import           Network.Socket           (socketToHandle)
--- import           SocketIO                 (sockIO)
 import           System.IO
 
 type Port = String
@@ -85,11 +84,13 @@ handleMsg server LcClient{..} msg =
                -> IO Bool
     handleCmd  ["/quit"]            = return False
     handleCmd  ["/kick", who]       = do
-                atomically $ kick server lcName who
+                atomically $ kick server who lcName
                 return True
+
     handleCmd  ("/tell":who:what)   = do
-                atomically $ tell server who (Tell lcName $ BC.unwords what)
+                atomically $ tell server who $ Tell lcName $ BC.unwords what
                 return True
+
     handleCmd bsLst                 = broadcastOrBadCmd bsLst
       where
         broadcastOrBadCmd :: [ByteString] -> IO Bool
